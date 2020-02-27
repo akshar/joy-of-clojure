@@ -1,5 +1,7 @@
 (ns ch10
-  (:import [java.util.concurrent Executors]))
+  (:import [java.util.concurrent Executors])
+  (:refer-clojure :exclude [aget aset count seq])
+  (:require [clojure.core :as clj]))
 
 ;; Time —The relative moments when events occur
 ;; Identity
@@ -245,3 +247,123 @@
 ;; when not to use agents:
 
 ;; But although agents perform beautifully when each one is representing a real identity in your application, they start to show weaknesses when used as a sort of “green thread” abstraction.
+
+
+;; Atoms: manager synchronous , uncordinated changes to shared state.
+
+;; Best suitable for compare and swap spinning operations (keep checking for values in loop.)
+
+;;atoms are thread-safe and can be used when you require a lightweight mutable reference to be shared across threads.
+
+
+(def ^:dynamic *time* (atom 0))
+
+
+(defn tick [] (swap! *time* inc))
+
+
+(dothreads! tick :threads 1000 :times 100)
+
+@*time*
+
+;; Atoms are safe to use across threads
+
+
+;; atomic memoization
+
+(defn manipulable-memoize [function]
+  (let [cache (atom {})]
+    (with-meta
+      (fn [& args]
+        (or (second (find @cache args))
+            (let [ret (apply function args)]
+              (swap! cache assoc args ret)
+              ret)))
+      {:cache cache})))
+
+
+(def slowly (fn [x] (Thread/sleep 1000) x))
+
+(def sometimes-slowly (manipulable-memoize slowly))
+
+(time [(slowly 9) (slowly 9)]) ;;"Elapsed time: 2001.606056 msecs"
+
+
+(time [(sometimes-slowly 42) (sometimes-slowly 42)])
+                                        ;"Elapsed time: 0.070627 msecs"
+
+
+(meta sometimes-slowly);; => {:cache #<Atom@685ef000: {(42) 42}>}
+
+
+(let [cache (:cache (meta sometimes-slowly))]
+  (swap! cache dissoc '(42))) ;; => {}
+
+
+;; LOCKS
+
+;; when to use locks:
+
+;;the common case being the modification of arrays concurrently
+
+
+
+(defprotocol SafeArray
+  (aset [this i f])
+  (aget [this i])
+  (count [this])
+  (seq [this]))
+
+
+(defn make-dumb-array [t sz]
+  (let [a (make-array t sz)]
+    (reify
+      SafeArray
+      (count [_] (clj/count a))
+      (seq [_] (clj/seq a))
+      (aget [_ i] (clj/get a i))
+      (aset [this i f]
+        (clj/aset a i (f (aget this i)))))));; unguarded aget aset
+
+
+(defn pummel [a]
+  (dothreads! #(dotimes [i (count a)]
+                 (aset a i inc))
+              :threads 100))
+
+(def D (make-dumb-array Integer/TYPE 8))
+
+(pummel D)
+
+(seq D) ;; => (34 40 41 41 35 39 43 41) ;; expecting 100 for each slot.
+
+
+;;Wrapping a mutable object in a Clojure reference type provides absolutely no guarantees for safe concurrent modification
+
+;;The locking macro takes a single parameter acting as the locking monitor and a body that executes in the monitor context.
+
+
+(defn make-safe-array [t sz]
+  (let [a (make-array t sz)]
+    (reify
+      SafeArray
+      (count [_] (clj/count a))
+      (seq [_] (clj/seq a))
+      (aget [_ i] (locking a
+                    (clj/get a i)))
+      (aset [this i f]
+        (locking a
+          (clj/aset a i (f (aget this i))))))))
+
+
+(def A (make-safe-array Integer/TYPE 8))
+
+(pummel A)
+
+(seq A) ;; => (100 100 100 100 100 100 100 100)
+
+
+;; 
+
+
+
