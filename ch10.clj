@@ -1,5 +1,6 @@
 (ns ch10
-  (:import [java.util.concurrent Executors])
+  (:import [java.util.concurrent Executors]
+           [java.util.concurrent.locks ReentrantLock])
   (:refer-clojure :exclude [aget aset count seq])
   (:require [clojure.core :as clj]))
 
@@ -249,7 +250,7 @@
 ;; But although agents perform beautifully when each one is representing a real identity in your application, they start to show weaknesses when used as a sort of “green thread” abstraction.
 
 
-;; Atoms: manager synchronous , uncordinated changes to shared state.
+;; Atoms: manages synchronous , uncordinated changes to shared state.
 
 ;; Best suitable for compare and swap spinning operations (keep checking for values in loop.)
 
@@ -363,7 +364,124 @@
 (seq A) ;; => (100 100 100 100 100 100 100 100)
 
 
-;; 
+;; One of the major complexities in concurrent programming using locks is that all errors must be handled fully and appropriately;otherwise you risk orphaned locks, and they spell deadlock.But the locking macro always releases the lock, even in the face of exceptions.
+
+;;locking is reentrant, or able to be called multiple times in the same thread.
+
+
+;; java locks
+
+;;;ReentrantLock:
+
+;;You can create a new type of smart array that provides finer-grained locking on a per-slot basis
 
 
 
+(defn lock-i [target-index num-locks]   ;; num-locks = array-size/2
+  (mod target-index num-locks))  ;; wrapping around.   foo % bar ensure value is bounded to bar-1
+
+(into-array (take (/ 5 2)
+                  (repeatedly #(ReentrantLock.))))
+
+
+(defn make-smart-array [t sz]
+  (let [a (make-array t sz) ;; array
+        lsz (/ sz 2) ;; pool size
+        L (into-array (take lsz  ;; locks, for every 2 array slots
+                            (repeatedly #(ReentrantLock.))))] ;; lock striping: using 
+    (reify
+      SafeArray
+      (count [_] (clj/count a))
+      (seq [_] (clj/seq a))
+      (aget [_ i]
+        (let [lk (clj/aget L (lock-i (inc i) lsz))]
+          (.lock lk)
+          (try
+            (clj/aget a i)
+            (finally (.unlock lk)))))
+      (aset [this i f]
+        (let [lk (clj/aget L (lock-i (inc i) lsz))]
+          (.lock lk)
+          (try
+            (clj/aset a i (f (aget this i))) ;; Reentrant locking 
+            (finally (.unlock lk))))))))
+
+;;ReentrantLock class doesn’t manage lock release automatically
+
+(def S (make-smart-array Integer/TYPE 8))
+
+(pummel S)
+
+(seq S) ;; => (100 100 100 100 100 100 100 100)
+
+
+
+;;Vars and dynamic binding
+
+;;Vars can be named and interned in a namespace
+
+
+;; Other ref types are stored with a name.
+
+;; This means when the name is evaluated, you get the reference object, not the value. To get the object’s value, you have to use deref
+
+;; Named vars flips this around - evaluating there name gives the value, so if you want the var object, you need to pass the name to the special operator var
+
+
+*read-eval*  ;; => true
+
+(var *read-eval*);; => #'clojure.core/*read-eval*
+
+#'*read-eval*;; => #'clojure.core/*read-eval*
+
+;;;;;;;;Binding macro
+
+
+
+;; The root binding of a var can act as the base of a stack, with each thread’s local bindings pushing onto that stack and popping         off of it as requested. The most common mechanism for pushing and popping thread-local bindings is the macro binding.
+
+(defn print-read-eval []
+  (println "*read-eval* is currenlty " *read-eval*))
+
+(defn binding-play []
+  (print-read-eval)
+  (binding [*read-eval* false]
+    (print-read-eval))
+  (print-read-eval))
+
+(binding-play)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; *read-eval* is currenlty  true  ;;
+;; *read-eval* is currenlty  false ;;
+;; *read-eval* is currenlty  true  ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;So in order to refer to a var instead of the value it’s bound to, you need to use #' or the special form var, which are equivalent:
+
+;;The precise state a var is in can be determined using the functions resolve, bound?, and thread-bound?
+
+
+;; anonymous vars:
+
+;;Vars don’t always have names, nor do they need to be interned in a namespace.
+;;The with-local-vars macro creates dynamic vars and gives them thread-local bindings all at once, but it doesn’t intern them.
+
+(def x 42)
+
+{:outer-var-value x
+ :with-locals (with-local-vars [x 9]
+                {:local-var x
+                 :local-var-value (var-get x)})
+ }
+;; => {:outer-var-value 42,
+;;     :with-locals {:local-var #<Var: --unnamed-->, :local-var-value 9}}
+
+
+;;You need to use deref or var-get to get the current value of the local var.
+
+
+;;https://clojuredocs.org/clojure.core/bound-fn
+
+;; Clojure’s main tenet is not to foster concurrency, but instead to provide         the tools for the sane management of state
