@@ -438,7 +438,7 @@
 
 
 
-;; The root binding of a var can act as the base of a stack, with each thread’s local bindings pushing onto that stack and popping         off of it as requested. The most common mechanism for pushing and popping thread-local bindings is the macro binding.
+;; The root binding of a var can act as the base of a stack, with each thread’s local bindings pushing onto that stack and popping off of it as requested. The most common mechanism for pushing and popping thread-local bindings is the macro binding.
 
 (defn print-read-eval []
   (println "*read-eval* is currenlty " *read-eval*))
@@ -458,7 +458,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-;;So in order to refer to a var instead of the value it’s bound to, you need to use #' or the special form var, which are equivalent:
+;;So in order to refer to a var instead of the value it’s bound to, you need to use #' or the special form var, which are equivalent
 
 ;;The precise state a var is in can be determined using the functions resolve, bound?, and thread-bound?
 
